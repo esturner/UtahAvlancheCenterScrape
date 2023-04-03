@@ -12,11 +12,44 @@ import pandas as pd
 import datetime
 import re
 
+##### Constants ########
+
 AVY_URL = 'https://utahavalanchecenter.org'
 OBS_EXT='/observations'
 FOR_EXT='/archives/forecasts'
 
 TODAY = datetime.date.today()
+
+FIELDS_DICT= {} #group: [list of fields]
+FIELDS_DICT['General'] = ['Observer Name', 'Observation Date', 'Region', 'Location Name or Route','Comments']
+FIELDS_DICT['Weather'] = ['Sky', 'Wind Direction', 'Wind Speed', 'Weather Comments']
+# "Snow surface conditions" may have multiple entries
+FIELDS_DICT['Snow Characteristics'] = ['New Snow Depth', 'New Snow Density', 'Snow Surface Conditions', 'Snow Characteristics Comments'] 
+# "Red Flags" may have multiple entries
+FIELDS_DICT['Red Flags']=['Red Flags', 'Red Flags Comments']
+FIELDS_DICT['Avalanche Problem #1'] = ['Problem', 'Trend', 'Problem #1 Comments']
+FIELDS_DICT['Avalanche Problem #2'] = ['Problem', 'Trend', 'Problem #2 Comments']
+#containts image
+FIELDS_DICT['Snow Profile'] = ['Aspect', 'Elevation', 'Slope Angle']
+FIELDS_DICT['Avalanche'] = ['Elevation', 'Aspect', 'Trigger', 'Depth', 'Width', 'Carried']
+
+MULTI_ENTRY_FIELDS = ['Red Flags', 'Snow Surface Conditions']
+
+NUMERIC_FIELDS = ['Elevation', 'Depth', 'Width', 'New Snow Depth', 'Slope Angle']
+
+FIELD_UNITS= {}
+FIELD_UNITS['Elevation'] = "\'"
+FIELD_UNITS['Depth'] = "\""
+FIELD_UNITS['Width'] = "\'"
+FIELD_UNITS['Slope Angle'] = "°"
+FIELD_UNITS['New Snow Depth'] = "\""
+
+RE_UNITS= {}
+RE_UNITS['Elevation']=re.compile(r"([0-9]*),([0-9]*)'")
+RE_UNITS['\"'] = re.compile(r"([0-9]*|[0-9]*.[0-9]*)\"")
+RE_UNITS['\''] = re.compile(r"([0-9]*|[0-9]*.[0-9]*)\'")
+RE_UNITS['°'] = re.compile(r"([0-9]*)°")
+
 
 ##### General ######
 '''functions that help other webscraping applications'''
@@ -91,15 +124,18 @@ def generate_observation_url(start_date, end_date):
 #### Avalache Observation Parsers #####
 ''' scrapes avalanche observation webpage for data and stores in dataframe'''
 
-def get_avalanche_data(observation_table):
+def get_avalanche_data(observation_table, verbose = False):
     '''Returns dataframe of avalanche data from list of observations'''
     avalanche_observation_table = filter_avalanche(observation_table).reset_index(drop=True)
     extensions = list(avalanche_observation_table.extension)
     data = []
     err = [] #collect list of extensions that did not work
+    
+    if verbose:
+        print('Scraping', len(extensions), 'avalanche observations...')
     for extension in extensions:
         try:
-            new_data = read_avalanche_observation(AVY_URL + extension)
+            new_data = read_avalanche_observation(AVY_URL + extension, verbose)
             data.append(new_data)
         except:
             err.append(extension)
@@ -110,10 +146,9 @@ def read_avalanche_observation(url, verbose = False):
     '''Extracts avalanche data from avalanche reports'''
     page = requests.get(url)
     soup = BeautifulSoup(page.content, 'html.parser')
-    title_class='page-title'
     fields = ['Observer Name', 'Observation Date', 'Region', 'Location Name or Route', 'Snow Profile','Comments']
     avy_fields = ['Elevation', 'Aspect', 'Trigger', 'Depth', 'Width', 'Carried']
-    numeric_fields = ['Elevation', 'Depth', 'Width']
+    
     avalanche_data = {}
     observation_title = soup.find(class_='page-title').string
     if observation_title.split(':')[0] == 'Avalanche':
@@ -121,10 +156,11 @@ def read_avalanche_observation(url, verbose = False):
         for field in fields:
             try:
                 datum = soup.find(string=field).parent.next_sibling.next_sibling.string
-                if field in numeric_fields:
+                if field in NUMERIC_FIELDS:
                     datum = convert_to_numeric(datum, field)
             except:
                 datum = None
+            
             if verbose:
                 print(field, 'is:',datum)
             avalanche_data[field] = datum
@@ -134,32 +170,49 @@ def filter_avalanche(observations):
     '''filters pandas dataframe for just avalanche entries'''
     return observations.loc[observations['Observation Title'].str.split(':').str[0] == 'Avalanche']
 
+######### Numeric Data ############
+
+def contains_digit(raw_string):
+    '''returns True if a digit is in string'''
+    return bool(re.search(r'\d', raw_string))
+
 def convert_to_numeric(raw_string, field):
-    r = re_fields[field]
-    m = r.match(raw_string)
+    '''converts a numeric field entry into a float with the correct magnetude for the field unit (see constants)'''
+    #check if there are any numerics
+    if not contains_digit(raw_string):
+        return None
+    unit = raw_string[-1]
+    field_unit = FIELD_UNITS[field]
+    #print("The scraped unit and field unit is", unit, 'and', field_unit)
+    #unit is given in ' and should be "
+    if unit != field_unit:
+        raw_string = re.sub(unit, field_unit, raw_string)
+        #print(raw_string)
+    
     if field == 'Elevation':
-        return float(m.group(1))*1000 + float(m.group(2))
+        r = RE_UNITS['Elevation']
+        m = r.match(raw_string)
+        num = float(m.group(1))*1000 + float(m.group(2))
     else:
-        return float(m.group(1))
+        r = RE_UNITS[field_unit]
+        m = r.match(raw_string)
+        num = float(m.group(1))
+    
+    #now convert the wrong unit into inches
+    if unit != field_unit:
+        num = convert_to_inches(num)
+    #print('The raw string and converted number are:',raw_string, num)
+    
+    return num
+
+def convert_to_inches(l_feet):
+    '''converts the length in feet to inches'''
+    return l_feet*12
 
 #TODO Store data in temporary csv for repeated use
 
 
 ############## General Observation Parsers ########################
-
-FIELDS_DICT= {} #group: [list of fields]
-FIELDS_DICT['General'] = ['Observer Name', 'Observation Date', 'Region', 'Location Name or Route','Comments']
-FIELDS_DICT['Weather'] = ['Sky', 'Wind Direction', 'Wind Speed', 'Weather Comments']
-# "Snow surface conditions" may have multiple entries
-FIELDS_DICT['Snow Characteristics'] = ['New Snow Depth', 'New Snow Density', 'Snow Surface Conditions', 'Snow Characteristics Comments'] 
-# "Red Flags" may have multiple entries
-FIELDS_DICT['Red Flags']=['Red Flags', 'Red Flags Comments']
-FIELDS_DICT['Avalanche Problem #1'] = ['Problem', 'Trend', 'Problem #1 Comments']
-FIELDS_DICT['Avalanche Problem #2'] = ['Problem', 'Trend', 'Problem #2 Comments']
-#containts image
-FIELDS_DICT['Snow Profile'] = ['Aspect', 'Elevation', 'Slope Angle']
-
-multi_entry_fields = ['Red Flags', 'Snow Surface Conditions']
 
 def get_observation_data(observation_table, verbose = False):
     '''Takes a dataframe containing a list of links to general observations and returns
@@ -207,9 +260,9 @@ def read_field_entry(field, soup, verbose=False):
     except:
         field_entry = None
         #print("Error at field:", field)
-    #TODO:fix slope angle and numberic fields
-    #if field in numeric_fields:
-        #field_entry = convert_to_numeric(field_entry, field)
+    
+    if field in NUMERIC_FIELDS:
+        field_entry = convert_to_numeric(field_entry, field)
     return field_entry
 
 def filter_general_observations(observations):
@@ -224,7 +277,7 @@ def read_general_observation(url, verbose = False):
     soup = BeautifulSoup(page.content, 'html.parser')
     
     numeric_fields = ['Elevation', 'Slope Angle']
-    multi_entry_fields = ['Red Flags', 'Snow Surface Conditions']
+    MULTI_ENTRY_FIELDS = ['Red Flags', 'Snow Surface Conditions']
     
     observation_data = {}
     #get observation title
@@ -237,11 +290,14 @@ def read_general_observation(url, verbose = False):
         if verbose:
             print('\n',group,'Group:')
         for field in FIELDS_DICT[group]:
-            if field in multi_entry_fields:
-                entry = read_multiple_entries(field, soup)
-            #TODO: extract image url from snow profile
-            else:
-                entry = read_field_entry(field, soup)
+            try:
+                if field in MULTI_ENTRY_FIELDS:
+                    entry = read_multiple_entries(field, soup)
+                #TODO: extract image url from snow profile
+                else:
+                    entry = read_field_entry(field, soup)
+            except:
+                entry = None
             if verbose:
                     print(field, ':',entry)
             observation_data[field] = entry
@@ -269,10 +325,11 @@ def get_page_forecasts(url):
 
 def main():
     print('~~ Welcome to the Utah Avalanche Data Scrape ~~') 
-    start_date = TODAY - datetime.timedelta(days = 14)
+    start_date = TODAY - datetime.timedelta(days = 14) #test for last two weeks
     print('Looking for observations between', TODAY, 'and', start_date)
     obs_table =  get_observation_table(start_date=start_date)
     print('Found', len(obs_table), 'observations.')
+    #while debugging its good to have smaller data set
     if len(obs_table) > 500:
         print('Too many observations to scan right now...closing application.')
         return

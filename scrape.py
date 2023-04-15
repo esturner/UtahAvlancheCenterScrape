@@ -345,7 +345,8 @@ def read_avalanche_problems(forecast_url):
         problem_info_soup = problem.parent.parent.nextSibling.nextSibling
         
         problem_info = read_problem_fields(problem_info_soup) #dictionary of problem information
-        avalanche_problems[problem.string + ': ' + problem_type] = problem_info
+        problem_info['Type'] = problem_type
+        avalanche_problems[problem.string] = problem_info
         
     return avalanche_problems
 
@@ -366,6 +367,8 @@ def read_problem_fields(problem_soup):
             img_url = AVY_URL + img_tag.get('src')
             #print(img_url)
             problem_info[field] = get_field_info(img_url, field)
+            if field == 'Location':
+                problem_info['Location Image Url'] = img_url
     return problem_info
 
 def get_field_info(img_url, field):
@@ -387,15 +390,13 @@ def classify_danger(rgb_tuple):
     '''takes an rgb_tuple and returns the danger rating of that color based on the minimum manhattan distance
     of the rgb value from the specific danger values linked to specific colors. 
     Low -> Green, Moderate -> Yellow, Considerable -> Orange, High -> Red, Extreme -> Black
-    eg. rgb_tuple = (5,255,6)-->'Green'-->'Low. Present and Not Present categories are for location rose applications'''
+    eg. rgb_tuple = (5,255,6)-->'Green'-->'Low.'''
 
     colors = {"Low" : (0,255,0),
               "Moderate": (255, 255, 0),
               "Considerable": (255, 128, 0),
               "High": (255, 0, 0),
               "Extreme" : (0, 0,0),
-              "Present" : (102, 178, 255),
-              "Not Present" : (192, 192, 192)
               }
 
     manhattan = lambda x,y : abs(x[0] - y[0]) + abs(x[1] - y[1]) + abs(x[2] - y[2]) #uses manhatten distance
@@ -455,7 +456,7 @@ def get_danger_rose(forecast_url, plot = False):
         #print(region, 'the danger is', rose_danger[region])
     if plot:
         plt.show()
-    return rose_danger
+    return rose_danger, rose_url
 
 ###Location, Likelihood, and Size Figures
 
@@ -506,11 +507,25 @@ def get_location_rose(img_url, plot = False):
         x,y = rose_coord[region]
         if plot:
             plt.plot(x, y, 'k', marker = 'o', markersize=6)
-        location_rose[region] = classify_danger(pix[x,y][0:3])
+        location_rose[region] = classify_location(pix[x,y][0:3])
         #print(region, 'the danger is', rose_danger[region])
     if plot:
         plt.show()
     return location_rose
+
+def classify_location(rgb_tuple):
+    '''Similar to classify_danger function
+    Present(blue) and Not Present(grey) categories indicate location of avy problem'''
+
+    colors = {
+              "Present" : (102, 178, 255),
+              "Not Present" : (192, 192, 192)
+              }
+
+    manhattan = lambda x,y : abs(x[0] - y[0]) + abs(x[1] - y[1]) + abs(x[2] - y[2]) #uses manhatten distance
+    distances = {k: manhattan(v, rgb_tuple) for k, v in colors.items()}
+    location = min(distances, key=distances.get)
+    return location
 
 def measure_likelihood(img_url, plot = False):
     #coordinates of each certainty category
@@ -594,7 +609,7 @@ def main():
     print('Scraping Today\'s forecast for Salt Lake...\n')
     todays_forecast_url = generate_forecast_url(TODAY, 'Salt Lake')
     print('Today\'s danger rose reads as...\n')
-    danger_rose = get_danger_rose(todays_forecast_url)
+    danger_rose, rose_url = get_danger_rose(todays_forecast_url)
     print(danger_rose)
     print('Today\'s avalanche problems are...\n')
     avalanche_problems = read_avalanche_problems(todays_forecast_url)

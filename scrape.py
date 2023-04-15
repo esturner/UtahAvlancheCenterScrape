@@ -507,15 +507,15 @@ def get_location_rose(img_url, plot = False):
         x,y = rose_coord[region]
         if plot:
             plt.plot(x, y, 'k', marker = 'o', markersize=6)
-        location_rose[region] = classify_location(pix[x,y][0:3])
+        location_rose[region] = classify_presence(pix[x,y][0:3])
         #print(region, 'the danger is', rose_danger[region])
     if plot:
         plt.show()
     return location_rose
 
-def classify_location(rgb_tuple):
+def classify_presence(rgb_tuple):
     '''Similar to classify_danger function
-    Present(blue) and Not Present(grey) categories indicate location of avy problem'''
+    Present(blue) and Not Present(grey) categories indicate location, likelihood, or size of avy problem'''
 
     colors = {
               "Present" : (102, 178, 255),
@@ -548,7 +548,7 @@ def measure_likelihood(img_url, plot = False):
         x,y = scale_coord[likelihood]
         if plot:
             plt.plot(x, y, 'k', marker = 'o', markersize=6)
-        scale_reading[likelihood] = classify_danger(pix[x,y][0:3])
+        scale_reading[likelihood] = classify_presence(pix[x,y][0:3])
         #print(likelihood, 'coordinates are', scale_coord[likelihood], 'and which reads as',scale_reading[likelihood])
         if scale_reading[likelihood] == 'Present':
             likelihood, likelihood_factor = likelihood
@@ -576,7 +576,7 @@ def measure_size(img_url, plot = False):
         x,y = scale_coord[size]
         if plot:
             plt.plot(x, y, 'k', marker = 'o', markersize=6)
-        scale_reading[size] = classify_danger(pix[x,y][0:3])
+        scale_reading[size] = classify_presence(pix[x,y][0:3])
         #print(size, 'coordinates are', scale_coord[size], 'and which reads as',scale_reading[size])
         if scale_reading[size] == 'Present':
             size, size_factor = size

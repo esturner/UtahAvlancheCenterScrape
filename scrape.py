@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import datetime
 import re
+from time import time
 
 #image analysis
 from PIL import Image
@@ -77,10 +78,20 @@ def get_season_start(date):
         start_year = date.year-1
     else:
         start_year = date.year
-    return datetime.datetime(start_year, start_month, start_day)
+    return datetime.date(start_year, start_month, start_day)
+
+def split_subregions(region_str):
+    '''splits the region format "Salt Lake » Big Cottonwood » Wolverine Peak" into ['Salt Lake', 'Big Cottonwoord', 'Wolverine Peak']'''
+    region_list = [x.strip() for x in region_str.split('»')]
+    return region_list
+
+def get_forecast_region(region_str):
+    subregions = split_subregions(region_str)
+    forecast_region = subregions[0]
+    return forecast_region
 
 
-########### OBSERVATIONS ###############
+########### OBSERVATION TABLE ###############
 '''functions that grabs a list of observations (avlanche and general) with urls,
 region, and date'''
 
@@ -130,8 +141,10 @@ def generate_observation_url(start_date, end_date):
 #### Avalache Observation Parsers #####
 ''' scrapes avalanche observation webpage for data and stores in dataframe'''
 
-def get_avalanche_data(observation_table, verbose = False):
+def get_avalanche_data(start_date = get_season_start(TODAY), end_date = TODAY, verbose = False, timed=False):
     '''Returns dataframe of avalanche data from list of observations'''
+    time_start = time()
+    observation_table = get_observation_table(start_date=start_date, end_date=end_date) 
     avalanche_observation_table = filter_avalanche(observation_table).reset_index(drop=True)
     extensions = list(avalanche_observation_table.extension)
     data = []
@@ -145,7 +158,14 @@ def get_avalanche_data(observation_table, verbose = False):
             data.append(new_data)
         except:
             err.append(extension)
-    avy_data = pd.DataFrame(data) 
+    avy_data = pd.DataFrame(data)
+    
+    #reformat data
+    avy_data['Observation Date'] = avy_data['Observation Date'].apply(lambda x: datetime.datetime.strptime(x, '%A, %B %d, %Y').date())
+    avy_data['Forecast Region'] = avy_data.Region.apply(get_forecast_region)
+    time_stop = time()
+    if timed:
+        print("Time elapsed scraping avalanche data:", (time_stop-time_start)/60, 'min.')
     return avy_data, err
 
 def read_avalanche_observation(url, verbose = False):
@@ -220,13 +240,14 @@ def convert_to_inches(l_feet):
 
 ############## General Observation Parsers ########################
 
-def get_observation_data(observation_table, verbose = False):
+def get_observation_data(start_date = get_season_start(TODAY), end_date=TODAY, verbose = False, timed = False):
     '''Takes a dataframe containing a list of links to general observations and returns
     the data from each of those observations in a dataframe'''
+    observation_table = get_observation_table(start_date=start_date, end_date=end_date) 
     general_observation_table = filter_general_observations(observation_table).reset_index(drop=True)
     extensions = list(general_observation_table.extension)
-    print('Gathering Data from', len(extensions), 'general observations.')
-    
+    #print('Gathering Data from', len(extensions), 'general observations.')
+    time_start = time()
     data = []
     err = [] #collect list of extensions that did not work
     for extension in extensions:
@@ -236,6 +257,13 @@ def get_observation_data(observation_table, verbose = False):
         except:
             err.append(extension)
     gen_obs_data = pd.DataFrame(data)
+    
+    #reformat data
+    gen_obs_data['Observation Date'] = gen_obs_data['Observation Date'].apply(lambda x: datetime.datetime.strptime(x, '%m/%d/%Y').date())
+    gen_obs_data['Forecast Region'] = gen_obs_data.Region.apply(get_forecast_region)
+    time_stop = time()
+    if timed:
+        print("Time elapsed scraping general observations:", (time_stop-time_start)/60, 'min.')
     return gen_obs_data, err
 
 def read_multiple_entries(field, soup):
@@ -273,6 +301,8 @@ def read_field_entry(field, soup, verbose=False):
 
 def filter_general_observations(observations):
     '''filters pandas dataframe for just general observation entries'''
+    #print(observations.head())
+    #print(observations['Observation Title'].str.split(':').str[0] == 'Observation')
     return observations.loc[observations['Observation Title'].str.split(':').str[0] == 'Observation']
 
 def read_general_observation(url, verbose = False):
@@ -310,28 +340,51 @@ def read_general_observation(url, verbose = False):
     return observation_data
 
 ############## FORECASTS ##################
-''' gathers previous forecast data '''
+''' gathers forecast data from Utah Avalanche Centery Forecast Archive'''
 
-def get_page_forecasts(url):
-    '''returns a dataframe of forecasts from url. Data in df
-    includes Date, Region, Forecast Title, (url) extension, and
-    forecastor'''
-    #get raw talbe
-    page_forecasts = get_html_table(url)
-    #Prep for relabeling
-    old_columns = page_forecasts.columns
-    r = re.compile(r"Forecast:\s(.*?)\sArea\sMountains") # regex for finding region
-    page_forecasts['Region'] = page_forecasts.iloc[:,1].apply(lambda x: r.match(x[0]).group(1))
-    # change names
-    page_forecasts[['Date', 'a']] = pd.DataFrame(page_forecasts[old_columns[0]].tolist(), index=page_forecasts.index)
-    page_forecasts[['Observation Title', 'extension']]= pd.DataFrame(page_forecasts[old_columns[1]].tolist(), index=page_forecasts.index)
-    page_forecasts[['Forecaster', 'b']]= pd.DataFrame(page_forecasts[old_columns[2]].tolist(), index=page_forecasts.index)
-    #remove old columns and columns with None
-    page_forecasts=page_forecasts.drop(list(old_columns) + ['a', 'b'], axis = 1)
-    return page_forecasts
+def get_forecasts(start_date= get_season_start(TODAY), end_date=TODAY, region= 'Salt Lake', timed=False):
+    '''returns dataframe of forecast fieds from the start_date to end date. Defaults to season's forecasts for
+    salt lake'''
+    time_start = time()
+    date = start_date
+    forecasts = pd.DataFrame()
+    while date <= TODAY:
+        #print(date)
+        date_forecast = get_forecast(date, region)
+        #print(date_forecast)
+        forecasts = pd.concat([forecasts,date_forecast], axis=1)
+        date += datetime.timedelta(days=1)
+    forecasts=forecasts.T.reset_index(drop=True)
+    time_stop = time()
+    if timed:
+        print("Time elapsed scraping forecasts:", (time_stop-time_start)/60, 'min.')
+    return forecasts
+
+def get_forecast(date, region):
+    '''Returns a dataframe entry holding: Date, Region, Danger Rose Dictionary, Danger Rose image url,
+    and numerated avalanche problems (whose data is stored in dictionaries).'''
+    forecast_url = generate_forecast_url(date, region)
+    forecast = pd.Series(dtype='object')
+    forecast['Date'] = date
+    forecast['Region'] = region
+    danger_rose, rose_url = get_danger_rose(forecast_url)
+    forecast['Danger Rose'] = danger_rose
+    forecast['Danger Rose URL'] = rose_url
+    avalanche_problems = avalanche_problems_to_series(read_avalanche_problems(forecast_url))
+    forecast = pd.concat([forecast, avalanche_problems])
+    return forecast
 
 def generate_forecast_url(date, region):
     return f"https://utahavalanchecenter.org/forecast/{region.replace(' ', '-').lower()}/{date.month}/{date.day}/{date.year}"
+
+def avalanche_problems_to_series(avalanche_problems):
+    '''converts the avalanche_problems dictionary into a single series'''
+    problems = pd.Series(dtype='object')
+    for problem in list(avalanche_problems):
+        for field in list(avalanche_problems[problem]):
+            column_name = f"{problem}:{field}"
+            problems[column_name]=avalanche_problems[problem][field]
+    return problems
 
 def read_avalanche_problems(forecast_url):
     '''collects the type, location, likelihood, size, and description of each avalanche problem'''
@@ -389,14 +442,14 @@ def get_field_info(img_url, field):
 def classify_danger(rgb_tuple):
     '''takes an rgb_tuple and returns the danger rating of that color based on the minimum manhattan distance
     of the rgb value from the specific danger values linked to specific colors. 
-    Low -> Green, Moderate -> Yellow, Considerable -> Orange, High -> Red, Extreme -> Black
+    1-> Low -> Green, 2-> Moderate -> Yellow, 3 -> Considerable -> Orange, 4 -> High -> Red, 5-> Extreme -> Black
     eg. rgb_tuple = (5,255,6)-->'Green'-->'Low.'''
 
-    colors = {"Low" : (0,255,0),
-              "Moderate": (255, 255, 0),
-              "Considerable": (255, 128, 0),
-              "High": (255, 0, 0),
-              "Extreme" : (0, 0,0),
+    colors = {1 : (0,255,0),
+              2 : (255, 255, 0),
+              3 : (255, 128, 0),
+              4 : (255, 0, 0),
+              5 : (0, 0,0),
               }
 
     manhattan = lambda x,y : abs(x[0] - y[0]) + abs(x[1] - y[1]) + abs(x[2] - y[2]) #uses manhatten distance
@@ -441,7 +494,10 @@ def get_danger_rose(forecast_url, plot = False):
                   ('S', 'Low'):(200, 280), 
                   ('SE', 'Low'):(290, 250)}
 
-    rose_url = get_rose_url(forecast_url)
+    try:
+        rose_url = get_rose_url(forecast_url)
+    except:
+        return None, None
     rose_img = Image.open(requests.get(rose_url, stream=True).raw)
     if plot:
         plt.imshow(rose_img)
@@ -583,38 +639,133 @@ def measure_size(img_url, plot = False):
             return size, size_factor
     return None
 
+def get_page_forecasts(url):
+    '''returns a dataframe of forecasts from url. Data in df
+    includes Date, Region, Forecast Title, (url) extension, and
+    forecastor'''
+    #get raw talbe
+    page_forecasts = get_html_table(url)
+    #Prep for relabeling
+    old_columns = page_forecasts.columns
+    r = re.compile(r"Forecast:\s(.*?)\sArea\sMountains") # regex for finding region
+    page_forecasts['Region'] = page_forecasts.iloc[:,1].apply(lambda x: r.match(x[0]).group(1))
+    # change names
+    page_forecasts[['Date', 'a']] = pd.DataFrame(page_forecasts[old_columns[0]].tolist(), index=page_forecasts.index)
+    page_forecasts[['Observation Title', 'extension']]= pd.DataFrame(page_forecasts[old_columns[1]].tolist(), index=page_forecasts.index)
+    page_forecasts[['Forecaster', 'b']]= pd.DataFrame(page_forecasts[old_columns[2]].tolist(), index=page_forecasts.index)
+    #remove old columns and columns with None
+    page_forecasts=page_forecasts.drop(list(old_columns) + ['a', 'b'], axis = 1)
+    return page_forecasts
 
-############################################
+################ Storage ############################
+def save_data(df, data_type = 'avalanche', filename=None, timed=False):
+    '''saves df to a .csv file, data_type is one of ['avalanche', 'forecast', 'observation']'''
+    time_start=time()
+    if filename:
+        df.to_csv(filename, index=False)
+        print("Saved data to", filename)
+        return
+    elif data_type == 'forecast':
+        start_date = df['Date'].min()
+        end_date = df['Date'].max()
+        #insert region
+    else:
+        start_date = df['Observation Date'].min()
+        end_date = df['Observation Date'].max()
+    
+    #print(start_date)
+    start_date=str(start_date).replace('-','_')
+    end_date = str(end_date).replace('-', '_')
+    if data_type == 'forecast':
+        region = df['Region'].iloc[0]
+        filename = f"{data_type}@{region}@{start_date}&{end_date}.csv"
+    else:
+        filename = f"{data_type}@{start_date}&{end_date}.csv"
+    
+    df.to_csv(filename, index=False)
+    time_stop = time()
+    if timed:
+        print("Time elapsed for save:", (time_stop-time_start)/60, 's.')
+    return
+
+def load_data(filename):
+    return pd.read_csv(filename, index_col=False)
+
+def update_data(filename, timed = False):
+    '''updates data stored in filename with new information'''
+    time_start = time()
+    data_type = filename.split('@')[0]
+    region = ''
+    print(filename, data_type)
+    if data_type == './forecast':
+        region = filename.split('@')[1]
+    start_date = filename.split('@')[-1].split('&')[0]
+    end_date = filename.split('@')[-1].split('&')[1].split('.')[0]
+    
+    old_data = load_data(filename)
+    end_date = datetime.datetime.strptime(end_date, '%Y_%m_%d').date() + datetime.timedelta(days=1)
+    if end_date == TODAY:
+        return old_data
+    
+    if data_type == './forecast':
+        new_data = get_forecasts(start_date=end_date , end_date=TODAY, region=region)
+    elif data_type == './avalanche':
+        new_data, err = get_avalanche_data(start_date=end_date, end_date=TODAY)
+    else:
+        new_data, err = get_observation_data(start_date=end_date, end_date=TODAY)
+    
+    updated_data = pd.concat([old_data, new_data], axis=0)
+    end_date = str(TODAY).replace('-','_')
+    
+    if data_type == 'forecast':
+        filename = f"{data_type}@{region}@{start_date}&{end_date}.csv"
+    else:
+        filename = f"{data_type}@{start_date}&{end_date}.csv"
+    
+    save_data(updated_data, data_type=data_type, filename=filename)
+    #fix index loading
+    time_stop = time()
+    if timed:
+        print("Time elapsed for update:", (time_stop-time_start)/60, 's.')
+    return updated_data
 
 def main():
     print('~~ Welcome to the Utah Avalanche Data Scrape ~~') 
-    start_date = TODAY - datetime.timedelta(days = 14) #test for last two weeks
+    #start_date = TODAY - datetime.timedelta(days = 14) #test for last two weeks
+    start_date = get_season_start(TODAY)
     print('Looking for observations between', TODAY, 'and', start_date)
-    obs_table =  get_observation_table(start_date=start_date)
-    print('Found', len(obs_table), 'observations.')
+    #obs_table =  get_observation_table(start_date=start_date)
+    #print('Found', len(obs_table), 'observations.')
     #while debugging its good to have smaller data set
-    if len(obs_table) > 500:
-        print('Too many observations to scan right now...closing application.')
-        return
-    print(obs_table.head())
+    #if len(obs_table) > 500:
+    #    print('Too many observations to scan right now...closing application.')
+    #    return
+    #print(obs_table.head())
     
     print('Scraping avalanche data...\n')
-    avalanches, err = get_avalanche_data(obs_table)
+    avalanches, err = get_avalanche_data(start_date=start_date, end_date = TODAY, timed=True)
     print(avalanches.head())
-
-    print('Scraping general observation data...\n')
-    observations, err = get_observation_data(obs_table, verbose=False)
-    print(observations.head())
+    save_data(avalanches, data_type = 'avalanche')
     
-    print('Scraping Today\'s forecast for Salt Lake...\n')
-    todays_forecast_url = generate_forecast_url(TODAY, 'Salt Lake')
-    print('Today\'s danger rose reads as...\n')
-    danger_rose, rose_url = get_danger_rose(todays_forecast_url)
-    print(danger_rose)
-    print('Today\'s avalanche problems are...\n')
-    avalanche_problems = read_avalanche_problems(todays_forecast_url)
-    for problem in list(avalanche_problems):
-        print(problem, avalanche_problems[problem], '\n')
+    print('Scraping general observation data...\n')
+    observations, err = get_observation_data(start_date=start_date, end_date=TODAY, verbose=False, timed=True)
+    print(observations.head())
+    save_data(observations, data_type = 'observations')
+
+    print('Scraping forecasts for Salt Lake...\n')
+    forecasts = get_forecasts(start_date= start_date, end_date=TODAY,region= 'Salt Lake', timed=True)
+    print(forecasts.sort_values('Date',ascending=False).reset_index(drop=True))
+    print(forecasts.head())
+    save_data(forecasts, data_type='forecast')
+
+    #print('Today\'s danger rose reads as...\n')
+    #danger_rose= forecasts.loc[14]["Danger Rose"] 
+    #print(danger_rose)
+    return avalanches, observations, forecasts
+
+def get_season_observations():
+	'''collects all the observations and stores them in .csv files'''
+	return None
 
 if __name__ == '__main__':
     main()

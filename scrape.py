@@ -15,6 +15,11 @@ from time import time
 
 #image analysis
 from PIL import Image
+import matplotlib.pyplot as plt
+
+#data management
+from ast import literal_eval
+
 
 ##### Constants ########
 
@@ -442,7 +447,7 @@ def get_field_info(img_url, field):
 def classify_danger(rgb_tuple):
     '''takes an rgb_tuple and returns the danger rating of that color based on the minimum manhattan distance
     of the rgb value from the specific danger values linked to specific colors. 
-    1-> Low -> Green, 2-> Moderate -> Yellow, 3 -> Considerable -> Orange, 4 -> High -> Red, 5-> Extreme -> Black
+    1-> Low -> Green, 2-> Moderate -> Yellow, 3 -> Considerable -> Orange, 4 -> High -> Red, 5-> Extreme -> Black, 0->no compass
     eg. rgb_tuple = (5,255,6)-->'Green'-->'Low.'''
 
     colors = {1 : (0,255,0),
@@ -450,6 +455,7 @@ def classify_danger(rgb_tuple):
               3 : (255, 128, 0),
               4 : (255, 0, 0),
               5 : (0, 0,0),
+              0 : (128, 128, 128)
               }
 
     manhattan = lambda x,y : abs(x[0] - y[0]) + abs(x[1] - y[1]) + abs(x[2] - y[2]) #uses manhatten distance
@@ -689,15 +695,24 @@ def save_data(df, data_type = 'avalanche', filename=None, timed=False):
     return
 
 def load_data(filename):
-    return pd.read_csv(filename, index_col=False)
+    data = pd.read_csv(filename, index_col=False)
+    data_type = get_data_type(filename)
+    if data_type=='forecast':
+        data['Danger Rose']= data['Danger Rose'].map(literal_eval, na_action='ignore')
+    return data
+
+def get_data_type(filename):
+    '''Returns the category of data (avalanche, observation, forecast)'''
+    data_type = strip_nonalnum_re(filename.split('@')[0])
+    return data_type
 
 def update_data(filename, timed = False):
     '''updates data stored in filename with new information'''
     time_start = time()
-    data_type = filename.split('@')[0]
+    data_type = get_data_type(filename)
     region = ''
     print(filename, data_type)
-    if data_type == './forecast':
+    if data_type == 'forecast':
         region = filename.split('@')[1]
     start_date = filename.split('@')[-1].split('&')[0]
     end_date = filename.split('@')[-1].split('&')[1].split('.')[0]
@@ -707,9 +722,9 @@ def update_data(filename, timed = False):
     if end_date == TODAY:
         return old_data
     
-    if data_type == './forecast':
+    if data_type == 'forecast':
         new_data = get_forecasts(start_date=end_date , end_date=TODAY, region=region)
-    elif data_type == './avalanche':
+    elif data_type == 'avalanche':
         new_data, err = get_avalanche_data(start_date=end_date, end_date=TODAY)
     else:
         new_data, err = get_observation_data(start_date=end_date, end_date=TODAY)
@@ -728,6 +743,11 @@ def update_data(filename, timed = False):
     if timed:
         print("Time elapsed for update:", (time_stop-time_start)/60, 's.')
     return updated_data
+
+def strip_nonalnum_re(word):
+    return re.sub(r"^\W+|\W+$", "", word)
+
+########################################################
 
 def main():
     print('~~ Welcome to the Utah Avalanche Data Scrape ~~') 

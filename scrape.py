@@ -450,12 +450,12 @@ def classify_danger(rgb_tuple):
     1-> Low -> Green, 2-> Moderate -> Yellow, 3 -> Considerable -> Orange, 4 -> High -> Red, 5-> Extreme -> Black, 0->no compass
     eg. rgb_tuple = (5,255,6)-->'Green'-->'Low.'''
 
-    colors = {1 : (0,255,0),
+    colors = {1 : (0,153,0),
               2 : (255, 255, 0),
               3 : (255, 128, 0),
               4 : (255, 0, 0),
               5 : (0, 0,0),
-              0 : (128, 128, 128)
+              0 : (160, 160, 160)
               }
 
     manhattan = lambda x,y : abs(x[0] - y[0]) + abs(x[1] - y[1]) + abs(x[2] - y[2]) #uses manhatten distance
